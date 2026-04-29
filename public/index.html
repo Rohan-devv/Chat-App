@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Websockets chat</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: Arial, sans-serif;
+            background: #111827;
+            color: #f9fafb;
+            display: grid;
+            place-items: center;
+            padding: 24px;
+        }
+
+        .chat {
+            width: min(100%, 520px);
+            height: 680px;
+            max-height: calc(100vh - 48px);
+            background: #1f2937;
+            border: 1px solid #374151;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+        }
+
+        .chat-header {
+            padding: 18px 20px;
+            border-bottom: 1px solid #374151;
+            background: #111827;
+        }
+
+        .chat-header h1 {
+            margin: 0;
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        .chat-header p {
+            margin: 6px 0 0;
+            color: #9ca3af;
+            font-size: 14px;
+        }
+
+        .messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .message {
+            max-width: 78%;
+            padding: 10px 12px;
+            border-radius: 8px;
+            line-height: 1.4;
+            font-size: 15px;
+        }
+
+        .message.received {
+            align-self: flex-start;
+            background: #374151;
+            color: #f3f4f6;
+        }
+
+        .message.sent {
+            align-self: flex-end;
+            background: #2563eb;
+            color: white;
+        }
+
+        .message-meta {
+            display: block;
+            margin-bottom: 4px;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.72);
+        }
+
+        .chat-form {
+            display: flex;
+            gap: 10px;
+            padding: 16px;
+            border-top: 1px solid #374151;
+            background: #111827;
+        }
+
+        .chat-form input {
+            flex: 1;
+            min-width: 0;
+            border: 1px solid #4b5563;
+            border-radius: 8px;
+            padding: 12px 14px;
+            background: #1f2937;
+            color: #f9fafb;
+            font-size: 15px;
+            outline: none;
+        }
+
+        .chat-form input:focus {
+            border-color: #60a5fa;
+        }
+
+        .chat-form button {
+            border: 0;
+            border-radius: 8px;
+            padding: 0 18px;
+            background: #22c55e;
+            color: #052e16;
+            font-size: 15px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .chat-form button:hover {
+            background: #4ade80;
+        }
+
+        @media (max-width: 520px) {
+            body {
+                padding: 0;
+            }
+
+            .chat {
+                width: 100%;
+                height: 100vh;
+                max-height: none;
+                border: 0;
+                border-radius: 0;
+            }
+        }
+    </style>
+</head>
+<body> 
+    <main class="chat">
+        <header class="chat-header">
+            <h1>Websockets Chat</h1>
+            <p>Simple room preview</p>
+        </header>
+
+        <section class="messages" id="messages" aria-live="polite">
+            <article class="message received">
+                <span class="message-meta">Alex</span>
+                Hey, welcome to the chat.
+            </article>
+            <article class="message sent">
+                <span class="message-meta">You</span>
+                Thanks! This interface is ready.
+            </article>
+        </section>
+
+        <p id="typingIndicator" style="display:none; color:#9ca3af; font-size:13px; padding: 0 20px 8px; margin:0;">Someone is typing...</p>
+
+        <form class="chat-form" id="chatForm">
+            <input id="messageInput" type="text" placeholder="Type a message..." autocomplete="off" />
+            <button type="submit">Send</button>
+        </form>
+    </main>  
+
+    <script src="/socket.io/socket.io.js"></script>
+
+    <script> 
+       console.log('Connecting to WebSocket server...'); 
+       
+        const socket = io();
+        const chatForm = document.getElementById('chatForm');
+        const messageInput = document.getElementById('messageInput');
+        const messagesContainer = document.getElementById('messages');
+        const typingIndicator = document.getElementById('typingIndicator');
+        const pendingSentMessages = [];
+        const typingDebounceMs = 400;
+        let typingDebounceTimer;
+        let typingHideTimer; 
+
+
+        function onMessageInput(message) {
+            console.log('Message sent:', message);
+            pendingSentMessages.push(message);
+            socket.emit('message', message);
+        }
+
+        function emitTypingEvent() {
+            clearTimeout(typingDebounceTimer);
+            typingDebounceTimer = setTimeout(() => {
+                if (messageInput.value.trim() === '') return;
+                socket.emit('user:typing');
+            }, typingDebounceMs);
+        }
+
+        socket.on('server:typing', () => {
+            typingIndicator.style.display = 'block';
+            clearTimeout(typingHideTimer);
+            typingHideTimer = setTimeout(() => {
+                typingIndicator.style.display = 'none';
+            }, 1000);
+        });
+
+        socket.on('message', (message) => {
+            console.log('Message received from server:', message);
+
+            const pendingIndex = pendingSentMessages.indexOf(message);
+            if (pendingIndex !== -1) {
+                pendingSentMessages.splice(pendingIndex, 1);
+                return;
+            }
+
+            addMessageToChat(message, 'received', 'Friend');
+        });
+
+        chatForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const messageText = messageInput.value.trim();
+            if (messageText === '') return;
+
+            clearTimeout(typingDebounceTimer);
+            onMessageInput(messageText);
+            addMessageToChat(messageText, 'sent', 'You');
+
+            messageInput.value = '';
+        });
+
+        messageInput.addEventListener('input', emitTypingEvent);
+
+        function addMessageToChat(message, type, senderName) {
+            const messageElement = document.createElement('article');
+            messageElement.classList.add('message', type);
+            messageElement.innerHTML = `
+                <span class="message-meta">${senderName}</span>
+                ${escapeHtml(message)}
+            `;
+
+            messagesContainer.appendChild(messageElement);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function escapeHtml(value) {
+            const div = document.createElement('div');
+            div.textContent = value;
+            return div.innerHTML;
+        }
+    </script>
+    
+</body>
+</html>
